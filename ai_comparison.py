@@ -11,8 +11,7 @@ def groq_analysis(game):
 
     completion = client.chat.completions.create(
         messages=[{"role": "user", "content": prompt}],
-        model="llama3-8b-8192"
-    )
+        model="llama-3.1-8b-instant"
 
     response = completion.choices[0].message.content
     try:
