@@ -4,7 +4,6 @@ from telegram_bot import send_message
 from datetime import datetime, timedelta
 import logging
 import time
-import json
 
 # ================= CONFIG =================
 
@@ -12,8 +11,8 @@ CONFIG = {
     'MIN_ODDS': 1.3,
     'MAX_ODDS': 15.0,
     'MIN_PROBABILITY': 5.0,
-    'VALUE_THRESHOLD': 0.02,   # 2% mais realista
-    'MAX_GAMES_ANALYZED': 8,   # limitar chamadas Groq
+    'VALUE_THRESHOLD': 0.02,   # 2% mínimo
+    'MAX_GAMES_ANALYZED': 8,   # limita chamadas Groq
 }
 
 logging.basicConfig(level=logging.INFO)
@@ -51,7 +50,7 @@ def process_games(games):
 
     results = []
 
-    # Limitar número de jogos para economizar Groq
+    # Limitar número de jogos analisados (economiza Groq)
     games = games[:CONFIG['MAX_GAMES_ANALYZED']]
 
     for game in games:
@@ -99,10 +98,7 @@ def process_games(games):
 
 def generate_message(games):
 
-    if not games:
-        return "⚠️ Nenhuma oportunidade estatística encontrada hoje."
-
-    message = "🔥 *TOP 3 VALUE DO DIA*\n"
+    message = "🔥 *TOP VALUE DO DIA*\n"
     message += f"📅 {datetime.now().strftime('%d/%m/%Y')}\n"
     message += "═══════════════════════\n\n"
 
@@ -126,20 +122,30 @@ def generate_message(games):
 def main():
 
     start = time.time()
+    logger.info("Iniciando análise do dia")
 
-    games = get_games_today()
+    try:
+        games = get_games_today()
 
-    if not games:
-        send_message("⚠️ Nenhum jogo encontrado hoje.")
-        return
+        if not games:
+            logger.info("Nenhum jogo encontrado.")
+            return  # NÃO envia mensagem
 
-    top_games = process_games(games)
+        top_games = process_games(games)
 
-    message = generate_message(top_games)
+        # 🔥 MODO SILENCIOSO
+        if not top_games:
+            logger.info("Nenhum value positivo encontrado.")
+            return  # NÃO envia nada
 
-    send_message(message)
+        message = generate_message(top_games)
+        send_message(message)
 
-    logger.info(f"Finalizado em {round(time.time()-start,2)}s")
+        logger.info("Mensagem enviada com sucesso.")
+        logger.info(f"Tempo total: {round(time.time()-start,2)}s")
+
+    except Exception as e:
+        logger.error(f"Erro fatal: {e}")
 
 if __name__ == "__main__":
     main()
