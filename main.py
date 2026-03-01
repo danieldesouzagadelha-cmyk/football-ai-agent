@@ -1,151 +1,83 @@
-from data_collector import get_games_today
-from ai_comparison import groq_analysis
-from telegram_bot import send_message
-from datetime import datetime, timedelta
 import logging
+import json
+import re
 import time
+import os
+from groq import Groq
 
-# ================= CONFIG =================
-
-CONFIG = {
-    'MIN_ODDS': 1.3,
-    'MAX_ODDS': 15.0,
-    'MIN_PROBABILITY': 5.0,
-    'VALUE_THRESHOLD': 0.02,   # 2% mínimo
-    'MAX_GAMES_ANALYZED': 8,   # limita chamadas Groq
-}
-
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ================= FUNÇÕES =================
+_analysis_cache = {}
+_cache_time = {}
 
-def calculate_value(probability, odd):
-    return (probability / 100 * odd) - 1
+def groq_analysis(game):
 
-def calculate_kelly(probability, odd):
-    implied_prob = 1 / odd
-    edge = (probability / 100) - implied_prob
-    if edge <= 0:
-        return 0
-    kelly = edge / (odd - 1)
-    return min(kelly, 0.05)  # máximo 5%
+    cache_key = f"{game['home']}_{game['away']}"
 
-def format_time(iso_time):
-    try:
-        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
-        dt = dt - timedelta(hours=3)
-        return dt.strftime("%d/%m %H:%M")
-    except:
-        return iso_time
-
-def validate_game(game):
-    if not (CONFIG['MIN_ODDS'] <= game['odd'] <= CONFIG['MAX_ODDS']):
-        return False
-    return True
-
-# ================= PROCESSAMENTO =================
-
-def process_games(games):
-
-    results = []
-
-    # Limitar número de jogos analisados (economiza Groq)
-    games = games[:CONFIG['MAX_GAMES_ANALYZED']]
-
-    for game in games:
-
-        if not validate_game(game):
-            continue
-
-        try:
-            ai_result = groq_analysis(game)
-            if not ai_result:
-                continue
-
-            probability = ai_result.get("probability", 0)
-
-            if probability < CONFIG['MIN_PROBABILITY']:
-                continue
-
-            value = calculate_value(probability, game['odd'])
-
-            if value <= CONFIG['VALUE_THRESHOLD']:
-                continue
-
-            stake_fraction = calculate_kelly(probability, game['odd'])
-
-            results.append({
-                "game": f"{game['home']} vs {game['away']}",
-                "league": game["league"],
-                "time": game["time"],
-                "odd": game["odd"],
-                "probability": round(probability, 2),
-                "value": round(value, 4),
-                "stake_fraction": round(stake_fraction * 100, 2)
-            })
-
-        except Exception as e:
-            logger.error(f"Erro no jogo {game.get('home')}: {e}")
-            continue
-
-    # Ranking por maior value
-    ranked = sorted(results, key=lambda x: x["value"], reverse=True)
-
-    return ranked[:3]
-
-# ================= MENSAGEM =================
-
-def generate_message(games):
-
-    message = "🔥 *TOP VALUE DO DIA*\n"
-    message += f"📅 {datetime.now().strftime('%d/%m/%Y')}\n"
-    message += "═══════════════════════\n\n"
-
-    for idx, game in enumerate(games, 1):
-
-        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉"
-
-        message += f"{medal} *{game['game']}*\n"
-        message += f"🏆 Liga: {game['league']}\n"
-        message += f"⏰ Horário: {format_time(game['time'])}\n"
-        message += f"📊 Prob IA: {game['probability']}%\n"
-        message += f"💰 Odd: {game['odd']}\n"
-        message += f"📈 Value: {game['value']*100:.2f}%\n"
-        message += f"💵 Stake sugerida: {game['stake_fraction']}% banca\n\n"
-
-    message += "⚠️ Gestão de risco sempre.\n"
-    return message
-
-# ================= MAIN =================
-
-def main():
-
-    start = time.time()
-    logger.info("Iniciando análise do dia")
+    if cache_key in _analysis_cache:
+        cache_age = time.time() - _cache_time.get(cache_key, 0)
+        if cache_age < 300:
+            logger.info(f"Usando cache para {cache_key}")
+            return _analysis_cache[cache_key]
 
     try:
-        games = get_games_today()
+        client = Groq(
+            api_key=os.getenv("GROQ_API_KEY")
+        )
 
-        if not games:
-            logger.info("Nenhum jogo encontrado.")
-            return  # NÃO envia mensagem
+        prompt = f"""Analise este jogo de futebol e retorne APENAS UM JSON:
 
-        top_games = process_games(games)
+Jogo: {game['home']} vs {game['away']}
+Odd: {game['odd']}
 
-        # 🔥 MODO SILENCIOSO
-        if not top_games:
-            logger.info("Nenhum value positivo encontrado.")
-            return  # NÃO envia nada
+Formato obrigatório:
+{{
+    "probability": 75.5,
+    "confidence": 0.8,
+    "prediction": "home"
+}}
+"""
 
-        message = generate_message(top_games)
-        send_message(message)
+        completion = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": "Responda apenas JSON válido."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            max_tokens=120
+        )
 
-        logger.info("Mensagem enviada com sucesso.")
-        logger.info(f"Tempo total: {round(time.time()-start,2)}s")
+        response_text = completion.choices[0].message.content
+
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+
+        if json_match:
+            result = json.loads(json_match.group())
+
+            result['probability'] = min(max(float(result['probability']), 0), 100)
+            result['confidence'] = min(max(float(result['confidence']), 0), 1)
+
+            _analysis_cache[cache_key] = result
+            _cache_time[cache_key] = time.time()
+
+            return result
+
+        return groq_analysis_fallback(game)
 
     except Exception as e:
-        logger.error(f"Erro fatal: {e}")
+        logger.error(f"Erro na API Groq: {e}")
+        return groq_analysis_fallback(game)
 
-if __name__ == "__main__":
-    main()
+
+def groq_analysis_fallback(game):
+
+    odd = game.get('odd', 2.0)
+    implied_prob = (1 / odd) * 100
+    safe_prob = min(implied_prob * 1.05, 95)
+
+    return {
+        "probability": round(safe_prob, 2),
+        "confidence": 0.5,
+        "prediction": "home"
+    }
