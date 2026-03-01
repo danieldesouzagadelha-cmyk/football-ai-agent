@@ -10,10 +10,14 @@ def groq_analysis(game):
     """
 
     completion = client.chat.completions.create(
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
         model="llama-3.1-8b-instant"
+    )
 
     response = completion.choices[0].message.content
+
     try:
         value = float(response.strip().replace("%", ""))
     except:
