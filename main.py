@@ -1,7 +1,14 @@
 from data_collector import get_games_today
-from probability_engine import calculate_probability
 from ai_comparison import groq_analysis
 from telegram_bot import send_message
+from datetime import datetime
+
+def calculate_value(probability, odd):
+    return (probability / 100 * odd) - 1
+
+def format_time(iso_time):
+    dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
+    return dt.strftime("%d/%m %H:%M")
 
 def main():
     games = get_games_today()
@@ -9,24 +16,36 @@ def main():
     results = []
 
     for game in games:
-        stat_prob = calculate_probability(game)
         ai_prob = groq_analysis(game)
 
-        final_score = (stat_prob + ai_prob) / 2
+        value = calculate_value(ai_prob, game["odd"])
 
-        results.append({
-            "game": f"{game['home']} vs {game['away']}",
-            "probability": final_score
-        })
+        if value > 0:
+            results.append({
+                "game": f"{game['home']} vs {game['away']}",
+                "league": game["league"],
+                "time": game["time"],
+                "odd": game["odd"],
+                "probability": ai_prob,
+                "value": value
+            })
 
-    # Ordenar top 3
-    top_games = sorted(results, key=lambda x: x["probability"], reverse=True)[:3]
+    # Ranking por maior VALUE
+    top_games = sorted(results, key=lambda x: x["value"], reverse=True)[:3]
+
+    if not top_games:
+        send_message("⚠️ Nenhuma oportunidade estatística encontrada hoje.")
+        return
 
     message = "🔥 *Top 3 Análises Estatísticas do Dia*\n\n"
 
     for idx, game in enumerate(top_games, 1):
-        message += f"{idx}️⃣ {game['game']}\n"
-        message += f"Probabilidade estimada: {round(game['probability'],2)}%\n\n"
+        message += f"{idx}️⃣ *{game['game']}*\n"
+        message += f"🏆 Liga: {game['league']}\n"
+        message += f"⏰ Horário: {format_time(game['time'])}\n"
+        message += f"📊 Probabilidade IA: {round(game['probability'],2)}%\n"
+        message += f"💰 Melhor Odd: {game['odd']}\n"
+        message += f"📈 Value: {round(game['value'],4)}\n\n"
 
     send_message(message)
 
