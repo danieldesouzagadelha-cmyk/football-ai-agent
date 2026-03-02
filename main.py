@@ -1,171 +1,82 @@
-print("ARQUIVO MAIN CARREGADO")
-
-import requests
 import os
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime
 from ai_comparison import groq_analysis
 from telegram_bot import send_message
-import time
 
-CONFIG = {
-    "MIN_PROBABILITY": 55.0,   # pode ajustar depois
-    "MAX_GAMES_ANALYZED": 8,
-}
+MIN_PROBABILITY = 65
+MIN_CONFIDENCE = 0.6
 
-# ================= API =================
 
 def get_games_today():
-
-    url = "https://odds-api1.p.rapidapi.com/odds"
-
-    querystring = {
-        "sport": "soccer",
-        "region": "eu",
-        "mkt": "h2h"
-    }
+    """
+    Busca jogos públicos do dia (API gratuita)
+    """
+    url = "https://free-api-live-football-data.p.rapidapi.com/football-live-list"
 
     headers = {
         "X-RapidAPI-Key": os.getenv("ODDS_API_KEY"),
-        "X-RapidAPI-Host": "odds-api1.p.rapidapi.com"
+        "X-RapidAPI-Host": "free-api-live-football-data.p.rapidapi.com"
     }
 
-    response = requests.get(url, headers=headers, params=querystring)
+    response = requests.get(url, headers=headers)
 
     if response.status_code != 200:
-        print("Erro na API:", response.text)
+        print("Erro ao buscar jogos:", response.text)
         return []
 
     data = response.json()
 
     games = []
 
-    for match in data:
-        try:
-            home = match.get("home_team")
-            away = match.get("away_team")
-            commence_time = match.get("commence_time")
-
-            bookmakers = match.get("bookmakers", [])
-            if not bookmakers:
-                continue
-
-            markets = bookmakers[0].get("markets", [])
-            if not markets:
-                continue
-
-            outcomes = markets[0].get("outcomes", [])
-            if not outcomes:
-                continue
-
-            odd = outcomes[0].get("price")
-
-            games.append({
-                "home": home,
-                "away": away,
-                "league": match.get("sport_title"),
-                "time": commence_time,
-                "odd": odd
-            })
-
-        except Exception:
-            continue
+    # Ajuste conforme estrutura real da API
+    for match in data.get("response", []):
+        games.append({
+            "home": match.get("home_name"),
+            "away": match.get("away_name"),
+            "time": match.get("match_time")
+        })
 
     return games
 
-# ================= PROCESSAMENTO =================
 
-def format_time(iso_time):
-    try:
-        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
-        dt = dt - timedelta(hours=3)
-        return dt.strftime("%d/%m %H:%M")
-    except:
-        return iso_time
+def format_message(game, result):
+    return f"""
+🔥 *OPORTUNIDADE DETECTADA*
 
-def process_games(games):
+⚽ {game['home']} vs {game['away']}
+📅 {datetime.now().strftime('%d/%m/%Y')}
 
-    results = []
+📊 Probabilidade: {result['probability']}%
+🎯 Confiança: {round(result['confidence'] * 100, 1)}%
+📌 Previsão: {result['prediction'].upper()}
 
-    games = games[:CONFIG["MAX_GAMES_ANALYZED"]]
+🤖 Análise via IA (Groq)
+"""
 
-    print(f"Jogos recebidos da API: {len(games)}")
-
-    for game in games:
-
-        print(f"Analisando {game['home']} vs {game['away']}")
-
-        ai_result = groq_analysis(game)
-
-        if not ai_result:
-            print("IA retornou None")
-            continue
-
-        probability = ai_result.get("probability", 0)
-
-        print(f"Probabilidade retornada: {probability}%")
-
-        if probability < CONFIG["MIN_PROBABILITY"]:
-            print("Abaixo do mínimo")
-            continue
-
-        results.append({
-            "game": f"{game['home']} vs {game['away']}",
-            "league": game["league"],
-            "time": game["time"],
-            "odd": game["odd"],
-            "probability": round(probability, 2),
-        })
-
-        print("Jogo aprovado")
-
-    ranked = sorted(results, key=lambda x: x["probability"], reverse=True)
-    return ranked[:3]
-
-# ================= MENSAGEM =================
-
-def generate_message(games):
-
-    message = "🔥 TOP PROBABILIDADE DO DIA\n"
-    message += f"📅 {datetime.now().strftime('%d/%m/%Y')}\n\n"
-
-    for idx, game in enumerate(games, 1):
-
-        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉"
-
-        message += f"{medal} {game['game']}\n"
-        message += f"Liga: {game['league']}\n"
-        message += f"Horário: {format_time(game['time'])}\n"
-        message += f"Prob IA: {game['probability']}%\n"
-        message += f"Odd: {game['odd']}\n\n"
-
-    return message
-
-# ================= MAIN =================
 
 def main():
-
     print("🚀 BOT INICIADO")
-
-    start = time.time()
 
     games = get_games_today()
 
-    if not games:
-        print("Nenhum jogo retornado pela API")
-        return
+    print(f"Jogos encontrados: {len(games)}")
 
-    top_games = process_games(games)
+    for game in games:
 
-    if not top_games:
-        print("Nenhum jogo passou no filtro")
-        return
+        result = groq_analysis(game)
 
-    message = generate_message(top_games)
+        if not result:
+            continue
 
-    send_message(message)
+        if (
+            result["probability"] >= MIN_PROBABILITY and
+            result["confidence"] >= MIN_CONFIDENCE
+        ):
+            message = format_message(game, result)
+            send_message(message)
+            print("Alerta enviado:", game["home"], "vs", game["away"])
 
-    print("Mensagem enviada com sucesso")
-    print(f"Tempo total: {round(time.time()-start,2)}s")
 
 if __name__ == "__main__":
     main()
