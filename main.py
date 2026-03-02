@@ -2,12 +2,14 @@ import requests
 import json
 import hashlib
 import os
+import time
 from datetime import datetime
 from ai_comparison import groq_analysis
 from telegram_bot import send_message
 
 MIN_PROBABILITY = 65
 MIN_CONFIDENCE = 0.6
+MAX_GAMES_PER_RUN = 8
 HISTORY_FILE = "history.json"
 
 
@@ -111,18 +113,27 @@ def main():
         return
 
     alerts_sent = 0
+    analyzed = 0
 
     for game in games:
 
+        if analyzed >= MAX_GAMES_PER_RUN:
+            break
+
         game_id = generate_game_id(game)
 
-        # Evitar repetição
         if game_id in history:
             continue
 
-        result = groq_analysis(game)
+        try:
+            result = groq_analysis(game)
+        except Exception as e:
+            print("Erro Groq:", e)
+            time.sleep(2)
+            continue
 
-        # Se vier algo inválido, ignora
+        analyzed += 1
+
         if not isinstance(result, dict):
             continue
 
@@ -144,9 +155,12 @@ def main():
             alerts_sent += 1
             print("✅ Alerta enviado:", game["home"], "vs", game["away"])
 
+        time.sleep(1.3)  # evita rate limit
+
     save_history(history)
 
-    print(f"🔔 Total de alertas enviados: {alerts_sent}")
+    print(f"🔎 Total analisados: {analyzed}")
+    print(f"🔔 Total alertas enviados: {alerts_sent}")
 
 
 if __name__ == "__main__":
