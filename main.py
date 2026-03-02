@@ -1,83 +1,128 @@
-import logging
-import json
-import re
+from data_collector import get_games_today
+from ai_comparison import groq_analysis
+from telegram_bot import send_message
+from datetime import datetime, timedelta
 import time
-import os
-from groq import Groq
 
-logger = logging.getLogger(__name__)
+# ================= CONFIG =================
 
-_analysis_cache = {}
-_cache_time = {}
+CONFIG = {
+    'MIN_ODDS': 1.3,
+    'MAX_ODDS': 15.0,
+    'MIN_PROBABILITY': 55.0,   # 🔥 ajuste depois
+    'MAX_GAMES_ANALYZED': 8,
+}
 
-def groq_analysis(game):
+# ================= FUNÇÕES =================
 
-    cache_key = f"{game['home']}_{game['away']}"
-
-    if cache_key in _analysis_cache:
-        cache_age = time.time() - _cache_time.get(cache_key, 0)
-        if cache_age < 300:
-            logger.info(f"Usando cache para {cache_key}")
-            return _analysis_cache[cache_key]
-
+def format_time(iso_time):
     try:
-        client = Groq(
-            api_key=os.getenv("GROQ_API_KEY")
-        )
+        dt = datetime.fromisoformat(iso_time.replace("Z", "+00:00"))
+        dt = dt - timedelta(hours=3)
+        return dt.strftime("%d/%m %H:%M")
+    except:
+        return iso_time
 
-        prompt = f"""Analise este jogo de futebol e retorne APENAS UM JSON:
+def validate_game(game):
+    return CONFIG['MIN_ODDS'] <= game['odd'] <= CONFIG['MAX_ODDS']
 
-Jogo: {game['home']} vs {game['away']}
-Odd: {game['odd']}
+# ================= PROCESSAMENTO =================
 
-Formato obrigatório:
-{{
-    "probability": 75.5,
-    "confidence": 0.8,
-    "prediction": "home"
-}}
-"""
+def process_games(games):
 
-        completion = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": "Responda apenas JSON válido."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            max_tokens=120
-        )
+    results = []
 
-        response_text = completion.choices[0].message.content
+    games = games[:CONFIG['MAX_GAMES_ANALYZED']]
+    print(f"Analisando {len(games)} jogos (limitado pelo MAX_GAMES_ANALYZED)")
 
-        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+    for game in games:
 
-        if json_match:
-            result = json.loads(json_match.group())
+        print(f"➡️ Analisando: {game['home']} vs {game['away']} | Odd: {game['odd']}")
 
-            result['probability'] = min(max(float(result['probability']), 0), 100)
-            result['confidence'] = min(max(float(result['confidence']), 0), 1)
+        if not validate_game(game):
+            print("❌ Odd fora do intervalo permitido")
+            continue
 
-            _analysis_cache[cache_key] = result
-            _cache_time[cache_key] = time.time()
+        try:
+            ai_result = groq_analysis(game)
 
-            return result
+            if not ai_result:
+                print("❌ IA retornou None")
+                continue
 
-        return groq_analysis_fallback(game)
+            probability = ai_result.get("probability", 0)
+            print(f"📊 Probabilidade retornada: {probability}%")
 
-    except Exception as e:
-        logger.error(f"Erro na API Groq: {e}")
-        return groq_analysis_fallback(game)
+            if probability < CONFIG['MIN_PROBABILITY']:
+                print("❌ Probabilidade abaixo do mínimo")
+                continue
 
+            results.append({
+                "game": f"{game['home']} vs {game['away']}",
+                "league": game["league"],
+                "time": game["time"],
+                "odd": game["odd"],
+                "probability": round(probability, 2),
+            })
 
-def groq_analysis_fallback(game):
+            print("✅ Jogo aprovado")
 
-    odd = game.get('odd', 2.0)
-    implied_prob = (1 / odd) * 100
-    safe_prob = min(implied_prob * 1.05, 95)
+        except Exception as e:
+            print(f"❌ Erro ao analisar jogo: {e}")
+            continue
 
-    return {
-        "probability": round(safe_prob, 2),
-        "confidence": 0.5,
-        "prediction": "home"
+    ranked = sorted(results, key=lambda x: x["probability"], reverse=True)
+
+    return ranked[:3]
+
+# ================= MENSAGEM =================
+
+def generate_message(games):
+
+    message = "🔥 TOP PROBABILIDADE DO DIA\n"
+    message += f"📅 {datetime.now().strftime('%d/%m/%Y')}\n\n"
+
+    for idx, game in enumerate(games, 1):
+
+        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉"
+
+        message += f"{medal} {game['game']}\n"
+        message += f"Liga: {game['league']}\n"
+        message += f"Horário: {format_time(game['time'])}\n"
+        message += f"Prob IA: {game['probability']}%\n"
+        message += f"Odd: {game['odd']}\n\n"
+
+    return message
+
+# ================= MAIN =================
+
+def main():
+
+    print("🚀 BOT INICIADO")
+
+    start = time.time()
+
+    games = get_games_today()
+
+    if not games:
+        print("⚠️ Nenhum jogo retornado pela API.")
+        return
+
+    print(f"📥 Jogos recebidos da API: {len(games)}")
+
+    top_games = process_games(games)
+
+    if not top_games:
+        print("⚠️ Nenhum jogo passou pelo filtro de probabilidade.")
+        return
+
+    message = generate_message(top_games)
+
+    send_message(message)
+
+    print("📤 Mensagem enviada com sucesso.")
+    print(f"⏱ Tempo total: {round(time.time()-start,2)} segundos")
+
+if __name__ == "__main__":
+    main()
     }
