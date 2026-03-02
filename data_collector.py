@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 def get_games_today():
     api_key = os.getenv("ODDS_API_KEY")
 
-    url = "https://odds-api1.p.rapidapi.com/v5/odds"
+    url = "https://odds-api1.p.rapidapi.com/odds"
 
     headers = {
         "X-RapidAPI-Key": api_key,
