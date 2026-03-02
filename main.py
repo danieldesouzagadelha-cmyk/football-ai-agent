@@ -1,20 +1,19 @@
-import os
 import requests
 import json
 import hashlib
+import os
 from datetime import datetime
 from ai_comparison import groq_analysis
 from telegram_bot import send_message
 
 MIN_PROBABILITY = 65
 MIN_CONFIDENCE = 0.6
-
 HISTORY_FILE = "history.json"
 
 
-# --------------------------
-# HISTÓRICO
-# --------------------------
+# ==============================
+# HISTÓRICO (ANTI-REPETIÇÃO)
+# ==============================
 
 def load_history():
     if not os.path.exists(HISTORY_FILE):
@@ -29,49 +28,58 @@ def save_history(history):
 
 
 def generate_game_id(game):
-    raw = f"{game['home']}_{game['away']}_{game['time']}"
+    raw = f"{game['home']}_{game['away']}_{game['date']}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-# --------------------------
-# BUSCAR JOGOS
-# --------------------------
+# ==============================
+# BUSCAR JOGOS (Scorebat - grátis)
+# ==============================
 
 def get_games_today():
+    print("🔎 Buscando jogos...")
 
-    url = "https://free-api-live-football-data.p.rapidapi.com/football-live-list"
+    url = "https://www.scorebat.com/video-api/v3/"
+    
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            print("Erro ao buscar jogos:", response.text)
+            return []
 
-    headers = {
-        "X-RapidAPI-Key": os.getenv("ODDS_API_KEY"),
-        "X-RapidAPI-Host": "free-api-live-football-data.p.rapidapi.com"
-    }
+        data = response.json()
 
-    response = requests.get(url, headers=headers)
+        games = []
 
-    if response.status_code != 200:
-        print("Erro API:", response.text)
+        for match in data.get("response", []):
+            try:
+                title = match.get("title", "")
+                if " - " not in title:
+                    continue
+
+                home, away = title.split(" - ")
+
+                games.append({
+                    "home": home.strip(),
+                    "away": away.strip(),
+                    "date": match.get("date")
+                })
+
+            except Exception:
+                continue
+
+        return games
+
+    except Exception as e:
+        print("Erro geral ao buscar jogos:", e)
         return []
 
-    data = response.json()
 
-    games = []
-
-    for match in data.get("response", []):
-        games.append({
-            "home": match.get("home_name"),
-            "away": match.get("away_name"),
-            "time": match.get("match_time")
-        })
-
-    return games
-
-
-# --------------------------
-# FORMATAÇÃO
-# --------------------------
+# ==============================
+# FORMATAR MENSAGEM
+# ==============================
 
 def format_message(game, result):
-
     return f"""
 🔥 *OPORTUNIDADE DETECTADA*
 
@@ -86,9 +94,9 @@ def format_message(game, result):
 """
 
 
-# --------------------------
-# EXECUÇÃO PRINCIPAL
-# --------------------------
+# ==============================
+# MAIN
+# ==============================
 
 def main():
 
@@ -99,11 +107,17 @@ def main():
 
     print(f"Jogos encontrados: {len(games)}")
 
+    if not games:
+        print("Nenhum jogo retornado pela API.")
+        return
+
+    alerts_sent = 0
+
     for game in games:
 
         game_id = generate_game_id(game)
 
-        # 🔒 Anti repetição
+        # Evita repetição
         if game_id in history:
             continue
 
@@ -112,10 +126,10 @@ def main():
         if not result:
             continue
 
-        if (
-            result["probability"] >= MIN_PROBABILITY and
-            result["confidence"] >= MIN_CONFIDENCE
-        ):
+        probability = float(result.get("probability", 0))
+        confidence = float(result.get("confidence", 0))
+
+        if probability >= MIN_PROBABILITY and confidence >= MIN_CONFIDENCE:
 
             message = format_message(game, result)
             send_message(message)
@@ -123,14 +137,16 @@ def main():
             history[game_id] = {
                 "home": game["home"],
                 "away": game["away"],
-                "time": game["time"],
-                "probability": result["probability"],
+                "probability": probability,
                 "timestamp": datetime.now().isoformat()
             }
 
-            print("Alerta enviado:", game["home"], "vs", game["away"])
+            alerts_sent += 1
+            print("✅ Alerta enviado:", game["home"], "vs", game["away"])
 
     save_history(history)
+
+    print(f"🔔 Total de alertas enviados: {alerts_sent}")
 
 
 if __name__ == "__main__":
