@@ -12,7 +12,7 @@ HISTORY_FILE = "history.json"
 
 
 # ==============================
-# HISTÓRICO (ANTI-REPETIÇÃO)
+# HISTÓRICO
 # ==============================
 
 def load_history():
@@ -33,22 +33,21 @@ def generate_game_id(game):
 
 
 # ==============================
-# BUSCAR JOGOS (Scorebat - grátis)
+# BUSCAR JOGOS (API pública)
 # ==============================
 
 def get_games_today():
     print("🔎 Buscando jogos...")
 
     url = "https://www.scorebat.com/video-api/v3/"
-    
+
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            print("Erro ao buscar jogos:", response.text)
+            print("Erro API Scorebat:", response.text)
             return []
 
         data = response.json()
-
         games = []
 
         for match in data.get("response", []):
@@ -65,13 +64,13 @@ def get_games_today():
                     "date": match.get("date")
                 })
 
-            except Exception:
+            except:
                 continue
 
         return games
 
     except Exception as e:
-        print("Erro geral ao buscar jogos:", e)
+        print("Erro ao buscar jogos:", e)
         return []
 
 
@@ -108,7 +107,7 @@ def main():
     print(f"Jogos encontrados: {len(games)}")
 
     if not games:
-        print("Nenhum jogo retornado pela API.")
+        print("Nenhum jogo encontrado.")
         return
 
     alerts_sent = 0
@@ -117,13 +116,14 @@ def main():
 
         game_id = generate_game_id(game)
 
-        # Evita repetição
+        # Evitar repetição
         if game_id in history:
             continue
 
         result = groq_analysis(game)
 
-        if not result:
+        # Se vier algo inválido, ignora
+        if not isinstance(result, dict):
             continue
 
         probability = float(result.get("probability", 0))
