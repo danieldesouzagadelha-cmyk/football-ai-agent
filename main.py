@@ -1,168 +1,73 @@
-import requests
-import json
-import hashlib
 import os
-import time
 from datetime import datetime
-from ai_comparison import groq_analysis
+from data_collector import get_games_today
 from telegram_bot import send_message
-
-MIN_PROBABILITY = 60
-MIN_CONFIDENCE = 0.6
-MAX_GAMES_PER_RUN = 8
-HISTORY_FILE = "history.json"
-
+from elo import load_ratings, save_ratings, get_rating, expected_score
 
 # ==============================
-# HISTÓRICO
+# CONFIGURAÇÕES PROFISSIONAIS
 # ==============================
 
-def load_history():
-    if not os.path.exists(HISTORY_FILE):
-        return {}
-    with open(HISTORY_FILE, "r") as f:
-        return json.load(f)
+MIN_PROBABILITY = 60  # só envia se Elo >= 60%
+MAX_ALERTS = 3        # máximo de alertas por execução
 
 
-def save_history(history):
-    with open(HISTORY_FILE, "w") as f:
-        json.dump(history, f, indent=2)
+def format_message(game, probability):
+    return f"""
+🔥 OPORTUNIDADE DETECTADA (ELO)
 
+⚽ {game['home']} vs {game['away']}
+📅 {game['time']}
 
-def generate_game_id(game):
-    raw = f"{game['home']}_{game['away']}_{game['date']}"
-    return hashlib.md5(raw.encode()).hexdigest()
+📊 Probabilidade Modelo: {round(probability, 1)}%
 
+🧠 Modelo: Elo Rating Matemático
+"""
 
-# ==============================
-# BASE MATEMÁTICA
-# ==============================
-
-def calculate_base_probability(game):
-
-    base = 33  # probabilidade neutra
-
-    # vantagem casa
-    base += 7
-
-    # heurística simples: nome maior tende a time mais tradicional
-    if len(game["home"]) > len(game["away"]):
-        base += 3
-    elif len(game["away"]) > len(game["home"]):
-        base -= 3
-
-    # limitar entre 40 e 65
-    base = max(40, min(base, 65))
-
-    return base
-
-
-# ==============================
-# BUSCAR JOGOS
-# ==============================
-
-def get_games_today():
-
-    url = "https://www.scorebat.com/video-api/v3/"
-    response = requests.get(url)
-
-    if response.status_code != 200:
-        return []
-
-    data = response.json()
-    games = []
-
-    for match in data.get("response", []):
-        try:
-            title = match.get("title", "")
-            if " - " not in title:
-                continue
-
-            home, away = title.split(" - ")
-
-            games.append({
-                "home": home.strip(),
-                "away": away.strip(),
-                "date": match.get("date")
-            })
-
-        except:
-            continue
-
-    return games
-
-
-# ==============================
-# MAIN
-# ==============================
 
 def main():
+    print("🚀 BOT ELO INICIADO")
+    print("🔎 Buscando jogos...")
 
-    print("🚀 BOT HÍBRIDO INICIADO")
-
-    history = load_history()
     games = get_games_today()
 
-    print("Jogos encontrados:", len(games))
+    if not games:
+        print("Nenhum jogo encontrado.")
+        return
 
-    alerts = 0
-    analyzed = 0
+    print(f"Jogos encontrados: {len(games)}")
+
+    ratings = load_ratings()
+
+    alerts_sent = 0
 
     for game in games:
 
-        if analyzed >= MAX_GAMES_PER_RUN:
+        if alerts_sent >= MAX_ALERTS:
             break
 
-        game_id = generate_game_id(game)
+        home = game["home"]
+        away = game["away"]
 
-        if game_id in history:
-            continue
+        home_rating = get_rating(home, ratings)
+        away_rating = get_rating(away, ratings)
 
-        base_prob = calculate_base_probability(game)
+        probability = expected_score(home_rating, away_rating) * 100
 
-        ai_result = groq_analysis(game)
+        print(
+            f"{home} vs {away} | "
+            f"Rating: {round(home_rating)} x {round(away_rating)} | "
+            f"Prob: {round(probability,1)}%"
+        )
 
-        if not isinstance(ai_result, dict):
-            continue
+        if probability >= MIN_PROBABILITY:
 
-        ai_prob = float(ai_result["probability"])
-        confidence = float(ai_result["confidence"])
-
-        # MODELO HÍBRIDO
-        final_probability = (base_prob * 0.6) + (ai_prob * 0.4)
-
-        analyzed += 1
-
-        if final_probability >= MIN_PROBABILITY and confidence >= MIN_CONFIDENCE:
-
-            message = f"""
-🔥 OPORTUNIDADE HÍBRIDA
-
-⚽ {game['home']} vs {game['away']}
-
-📊 Base matemática: {base_prob}%
-🤖 IA: {ai_prob}%
-🎯 Final híbrido: {round(final_probability,1)}%
-🔒 Confiança IA: {round(confidence*100,1)}%
-
-Modelo: Matemática + IA
-"""
-
+            message = format_message(game, probability)
             send_message(message)
 
-            history[game_id] = {
-                "prob": final_probability,
-                "timestamp": datetime.now().isoformat()
-            }
+            alerts_sent += 1
 
-            alerts += 1
-
-        time.sleep(1.3)
-
-    save_history(history)
-
-    print("Analisados:", analyzed)
-    print("Alertas enviados:", alerts)
+    print(f"Alertas enviados: {alerts_sent}")
 
 
 if __name__ == "__main__":
