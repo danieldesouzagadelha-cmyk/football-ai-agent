@@ -1,65 +1,44 @@
-import os
 import requests
-from datetime import datetime, timezone
+import os
+from datetime import datetime
+
+API_KEY = os.getenv("RAPIDAPI_KEY")
+
+HEADERS = {
+    "X-RapidAPI-Key": API_KEY,
+    "X-RapidAPI-Host": "sportapi7.p.rapidapi.com"
+}
 
 def get_games_today():
-    api_key = os.getenv("ODDS_API_KEY")
+    today = datetime.now().strftime("%Y-%m-%d")
 
-    url = "https://odds-api1.p.rapidapi.com/odds"
+    url = f"https://sportapi7.p.rapidapi.com/api/v1/sport/football/scheduled-events/{today}"
 
-    headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "odds-api1.p.rapidapi.com"
-    }
-
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=HEADERS)
 
     if response.status_code != 200:
-        print("Erro na API:", response.text)
+        print("Erro API:", response.text)
         return []
 
     data = response.json()
-
-    matches = data if isinstance(data, list) else data.get("data", [])
-
-    today = datetime.now(timezone.utc).date()
+    events = data.get("events", [])
 
     games = []
 
-    for match in matches:
+    for event in events:
+        try:
+            home = event["homeTeam"]["name"]
+            away = event["awayTeam"]["name"]
+            event_id = event["id"]
 
-        commence = match.get("commence_time")
-        if not commence:
+            games.append({
+                "id": event_id,
+                "home": home,
+                "away": away
+            })
+
+        except KeyError:
             continue
 
-        game_date = datetime.fromisoformat(commence.replace("Z", "+00:00")).date()
-
-        if game_date != today:
-            continue
-
-        # Pegando a melhor odd disponível
-        best_odd = None
-
-        bookmakers = match.get("bookmakers", [])
-        for book in bookmakers:
-            markets = book.get("markets", [])
-            for market in markets:
-                if market.get("key") == "h2h":
-                    for outcome in market.get("outcomes", []):
-                        if outcome.get("name") == match.get("home_team"):
-                            odd = outcome.get("price")
-                            if best_odd is None or odd > best_odd:
-                                best_odd = odd
-
-        if best_odd is None:
-            continue
-
-        games.append({
-            "home": match.get("home_team"),
-            "away": match.get("away_team"),
-            "league": match.get("sport_title"),
-            "time": commence,
-            "odd": best_odd
-        })
-
+    print(f"Jogos encontrados: {len(games)}")
     return games
