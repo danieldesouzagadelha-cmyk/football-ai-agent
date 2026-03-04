@@ -1,74 +1,53 @@
-import os
-from datetime import datetime
-from data_collector import get_games_today
+from data_collector import get_games_today, get_featured_odds, extract_home_odd
+from elo import get_rating, calculate_probability
 from telegram_bot import send_message
-from elo import load_ratings, save_ratings, get_rating, expected_score
 
-# ==============================
-# CONFIGURAÇÕES PROFISSIONAIS
-# ==============================
-
-MIN_PROBABILITY = 60  # só envia se Elo >= 60%
-MAX_ALERTS = 3        # máximo de alertas por execução
+EDGE_THRESHOLD = 0.07
 
 
-def format_message(game, probability):
-    return f"""
-🔥 OPORTUNIDADE DETECTADA (ELO)
-
-⚽ {game['home']} vs {game['away']}
-📅 {game['time']}
-
-📊 Probabilidade Modelo: {round(probability, 1)}%
-
-🧠 Modelo: Elo Rating Matemático
-"""
-
-
-def main():
+def run():
     print("🚀 BOT ELO INICIADO")
-    print("🔎 Buscando jogos...")
 
     games = get_games_today()
 
-    if not games:
-        print("Nenhum jogo encontrado.")
-        return
-
     print(f"Jogos encontrados: {len(games)}")
 
-    ratings = load_ratings()
-
-    alerts_sent = 0
-
     for game in games:
-
-        if alerts_sent >= MAX_ALERTS:
-            break
-
         home = game["home"]
         away = game["away"]
 
-        home_rating = get_rating(home, ratings)
-        away_rating = get_rating(away, ratings)
+        odds_data = get_featured_odds(game["id"])
 
-        probability = expected_score(home_rating, away_rating) * 100
+        if not odds_data:
+            continue
 
-        print(
-            f"{home} vs {away} | "
-            f"Rating: {round(home_rating)} x {round(away_rating)} | "
-            f"Prob: {round(probability,1)}%"
-        )
+        odd_home = extract_home_odd(odds_data)
 
-        if probability >= MIN_PROBABILITY:
+        if not odd_home:
+            continue
 
-            message = format_message(game, probability)
+        home_rating = get_rating(home)
+        away_rating = get_rating(away)
+
+        prob_model = calculate_probability(home_rating, away_rating)
+        prob_market = 1 / odd_home
+
+        edge = prob_model - prob_market
+
+        print(f"{home} vs {away} | Edge: {round(edge,4)}")
+
+        if edge >= EDGE_THRESHOLD:
+            message = (
+                f"📊 <b>ALERTA QUANTITATIVO</b>\n\n"
+                f"{home} vs {away}\n\n"
+                f"Modelo: {round(prob_model*100,2)}%\n"
+                f"Mercado: {round(prob_market*100,2)}%\n"
+                f"Odd: {round(odd_home,2)}\n"
+                f"Edge: {round(edge*100,2)}%"
+            )
+
             send_message(message)
-
-            alerts_sent += 1
-
-    print(f"Alertas enviados: {alerts_sent}")
 
 
 if __name__ == "__main__":
-    main()
+    run()
