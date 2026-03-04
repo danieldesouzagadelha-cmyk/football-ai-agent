@@ -2,7 +2,7 @@ from data_collector import get_games_today, get_featured_odds, extract_home_odd
 from elo import get_rating, calculate_probability
 from telegram_bot import send_message
 
-EDGE_THRESHOLD = 0.07
+EDGE_THRESHOLD = -1
 
 
 def run():
