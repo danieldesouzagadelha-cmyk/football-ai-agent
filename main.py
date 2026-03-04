@@ -1,20 +1,55 @@
-import os
-import requests
+from data_collector import (
+    get_games_today,
+    get_featured_odds,
+    extract_home_odd
+)
+from elo import get_rating, calculate_probability
+from telegram_bot import send_message
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+EDGE_THRESHOLD = 0.07  # 7%
 
-print("TOKEN:", TOKEN)
-print("CHAT_ID:", CHAT_ID)
 
-url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+def run():
+    print("🚀 BOT ELO INICIADO")
 
-payload = {
-    "chat_id": CHAT_ID,
-    "text": "🚀 TESTE FINAL AGORA"
-}
+    games = get_games_today()
+    print(f"Jogos encontrados: {len(games)}")
 
-response = requests.post(url, data=payload)
+    for game in games[:30]:  # limitar para evitar sobrecarga
+        home = game["home"]
+        away = game["away"]
 
-print("STATUS:", response.status_code)
-print("RESPOSTA:", response.text)
+        odds_data = get_featured_odds(game["id"])
+
+        if not odds_data:
+            continue
+
+        odd_home = extract_home_odd(odds_data)
+
+        if not odd_home:
+            continue
+
+        home_rating = get_rating(home)
+        away_rating = get_rating(away)
+
+        prob_model = calculate_probability(home_rating, away_rating)
+        prob_market = 1 / odd_home
+        edge = prob_model - prob_market
+
+        print(f"{home} vs {away} | Odd: {round(odd_home,2)} | Edge: {round(edge,4)}")
+
+        if edge >= EDGE_THRESHOLD:
+            message = (
+                f"📊 <b>ALERTA QUANTITATIVO</b>\n\n"
+                f"{home} vs {away}\n\n"
+                f"Modelo: {round(prob_model*100,2)}%\n"
+                f"Mercado: {round(prob_market*100,2)}%\n"
+                f"Odd: {round(odd_home,2)}\n"
+                f"Edge: {round(edge*100,2)}%"
+            )
+
+            send_message(message)
+
+
+if __name__ == "__main__":
+    run()
