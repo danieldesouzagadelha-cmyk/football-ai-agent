@@ -1,51 +1,30 @@
-import json
-import os
-import math
+ratings = {}
 
-RATINGS_FILE = "data/ratings.json"
-INITIAL_RATING = 1500
-K_FACTOR = 20
-
-
-def load_ratings():
-    if not os.path.exists(RATINGS_FILE):
-        return {}
-    with open(RATINGS_FILE, "r") as f:
-        return json.load(f)
+def get_rating(team):
+    if team not in ratings:
+        ratings[team] = 1500
+    return ratings[team]
 
 
-def save_ratings(ratings):
-    os.makedirs("data", exist_ok=True)
-    with open(RATINGS_FILE, "w") as f:
-        json.dump(ratings, f, indent=2)
+def calculate_probability(home_rating, away_rating):
+    return 1 / (1 + 10 ** ((away_rating - home_rating) / 400))
 
 
-def get_rating(team, ratings):
-    return ratings.get(team, INITIAL_RATING)
+def update_elo(home, away, home_goals, away_goals, k=20):
+    home_rating = get_rating(home)
+    away_rating = get_rating(away)
 
+    expected_home = calculate_probability(home_rating, away_rating)
 
-def expected_score(rating_a, rating_b):
-    return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
+    if home_goals > away_goals:
+        score_home = 1
+    elif home_goals == away_goals:
+        score_home = 0.5
+    else:
+        score_home = 0
 
+    new_home = home_rating + k * (score_home - expected_home)
+    new_away = away_rating + k * ((1 - score_home) - (1 - expected_home))
 
-def update_ratings(home, away, result, ratings):
-    """
-    result:
-    1 = home win
-    0.5 = draw
-    0 = away win
-    """
-
-    rating_home = get_rating(home, ratings)
-    rating_away = get_rating(away, ratings)
-
-    expected_home = expected_score(rating_home, rating_away)
-    expected_away = expected_score(rating_away, rating_home)
-
-    rating_home += K_FACTOR * (result - expected_home)
-    rating_away += K_FACTOR * ((1 - result) - expected_away)
-
-    ratings[home] = rating_home
-    ratings[away] = rating_away
-
-    return ratings
+    ratings[home] = new_home
+    ratings[away] = new_away
