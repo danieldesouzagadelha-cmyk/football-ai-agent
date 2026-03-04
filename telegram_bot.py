@@ -2,7 +2,7 @@ import requests
 import os
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID")   # ← mudou aqui
 
 def send_message(message):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -15,5 +15,5 @@ def send_message(message):
 
     response = requests.post(url, data=payload)
 
-    if response.status_code != 200:
-        print("Erro Telegram:", response.text)
+    print("STATUS:", response.status_code)
+    print("RESPOSTA:", response.text)
