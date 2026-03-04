@@ -9,6 +9,10 @@ HEADERS = {
     "X-RapidAPI-Host": "sportapi7.p.rapidapi.com"
 }
 
+
+# ==============================
+# BUSCAR JOGOS DO DIA
+# ==============================
 def get_games_today():
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -38,6 +42,9 @@ def get_games_today():
     return games
 
 
+# ==============================
+# BUSCAR ODDS FEATURED
+# ==============================
 def get_featured_odds(event_id):
     url = f"https://sportapi7.p.rapidapi.com/api/v1/event/{event_id}/featuredodds"
 
@@ -49,19 +56,23 @@ def get_featured_odds(event_id):
     return response.json()
 
 
-def fractional_to_decimal(fraction):
-    num, den = fraction.split("/")
-    return (float(num) / float(den)) + 1
-
-
+# ==============================
+# EXTRAIR ODD DO MANDANTE (1X2)
+# ==============================
 def extract_home_odd(data):
     markets = data.get("markets", [])
 
     for market in markets:
-        if market.get("marketGroup") == "1X2" and market.get("marketName") == "Full time":
+        # Aceita qualquer mercado 1X2 (mais flexível)
+        if market.get("marketGroup") == "1X2":
             for choice in market.get("choices", []):
                 if choice.get("name") == "1":
                     frac = choice.get("fractionalValue")
-                    return fractional_to_decimal(frac)
+                    if frac:
+                        try:
+                            num, den = frac.split("/")
+                            return (float(num) / float(den)) + 1
+                        except:
+                            return None
 
     return None
