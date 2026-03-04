@@ -17,7 +17,7 @@ def get_games_today():
     response = requests.get(url, headers=HEADERS)
 
     if response.status_code != 200:
-        print("Erro API:", response.text)
+        print("Erro ao buscar jogos:", response.text)
         return []
 
     data = response.json()
@@ -27,18 +27,41 @@ def get_games_today():
 
     for event in events:
         try:
-            home = event["homeTeam"]["name"]
-            away = event["awayTeam"]["name"]
-            event_id = event["id"]
-
             games.append({
-                "id": event_id,
-                "home": home,
-                "away": away
+                "id": event["id"],
+                "home": event["homeTeam"]["name"],
+                "away": event["awayTeam"]["name"]
             })
-
-        except KeyError:
+        except:
             continue
 
-    print(f"Jogos encontrados: {len(games)}")
     return games
+
+
+def get_featured_odds(event_id):
+    url = f"https://sportapi7.p.rapidapi.com/api/v1/event/{event_id}/featuredodds"
+
+    response = requests.get(url, headers=HEADERS)
+
+    if response.status_code != 200:
+        return None
+
+    return response.json()
+
+
+def fractional_to_decimal(fraction):
+    num, den = fraction.split("/")
+    return (float(num) / float(den)) + 1
+
+
+def extract_home_odd(data):
+    markets = data.get("markets", [])
+
+    for market in markets:
+        if market.get("marketGroup") == "1X2" and market.get("marketName") == "Full time":
+            for choice in market.get("choices", []):
+                if choice.get("name") == "1":
+                    frac = choice.get("fractionalValue")
+                    return fractional_to_decimal(frac)
+
+    return None
